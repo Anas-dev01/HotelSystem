@@ -1,0 +1,41 @@
+-- 1. Clean up existing data
+TRUNCATE bookings, guests, rooms RESTART IDENTITY CASCADE;
+
+-- 2. Insert diverse Rooms
+INSERT INTO rooms (room_number, type, floor, price_per_night, status, max_guests) VALUES
+('101', 'single', 1, 89, 'available', 1),
+('102', 'single', 1, 89, 'occupied', 1),
+('201', 'double', 2, 149, 'available', 2),
+('301', 'suite', 3, 299, 'occupied', 3),
+('501', 'penthouse', 5, 599, 'available', 4);
+
+-- 3. Insert Guests
+INSERT INTO guests (full_name, email, phone, vip_status) VALUES
+('Adeika Mubarak', 'mubarak@email.com', '+234 801 6271 955', true),
+('Salam Jamiu', 'salam@email.com', '+234 802 622 8581', false),
+('Shakir Basit', 'shakir@email.com', '+234 803 345 4527', true);
+
+-- 4. Insert Historical Bookings (for the charts)
+-- Past Revenue (Jan - March)
+INSERT INTO bookings (guest_id, room_id, check_in, check_out, status, total_amount, payment_status, created_at)
+SELECT 
+  (SELECT id FROM guests ORDER BY random() LIMIT 1),
+  (SELECT id FROM rooms ORDER BY random() LIMIT 1),
+  '2026-01-10'::date + (i || ' days')::interval,
+  '2026-01-12'::date + (i || ' days')::interval,
+  'checked-out',
+  250.00,
+  'paid',
+  '2026-01-01'::date + (i || ' days')::interval
+FROM generate_series(1, 40, 5) s(i);
+
+-- 5. Create a view for Monthly Revenue (The Scalable Way)
+CREATE OR REPLACE VIEW monthly_revenue_stats AS
+SELECT 
+  to_char(check_in, 'Mon') as month,
+  SUM(total_amount) as revenue,
+  COUNT(id) as bookings
+FROM bookings
+WHERE payment_status = 'paid'
+GROUP BY month, extract(month from check_in)
+ORDER BY extract(month from check_in);

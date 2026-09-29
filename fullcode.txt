@@ -1,0 +1,284 @@
+App.tsx
+
+import { useEffect } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { supabase } from "@/lib/supabase";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import Login from "./pages/Login";
+import Index from "./pages/Index.tsx";
+import Rooms from "./pages/Rooms.tsx";
+import Bookings from "./pages/Bookings.tsx";
+import Guests from "./pages/Guests.tsx";
+import Analytics from "./pages/Analytics.tsx";
+import SettingsPage from "./pages/SettingsPage.tsx";
+import NotFound from "./pages/NotFound.tsx";
+
+const queryClient = new QueryClient();
+
+const App = () => {
+  useEffect(() => {
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings' },
+        (payload) => {
+          console.log('Change received!', payload);
+          // Refresh the TanStack Query cache automatically
+          queryClient.invalidateQueries({ queryKey: ['bookings'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            
+            {/* Wrap all administrative routes */}
+            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/rooms" element={<ProtectedRoute><Rooms /></ProtectedRoute>} />
+            <Route path="/bookings" element={<ProtectedRoute><Bookings /></ProtectedRoute>} />
+            <Route path="/guests" element={<ProtectedRoute><Guests /></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
+
+export default App;
+
+
+
+
+main.tsx
+import { createRoot } from "react-dom/client";
+import App from "./App.tsx";
+import "./index.css";
+
+createRoot(document.getElementById("root")!).render(<App />);
+
+
+
+pages/Analytics.tsx
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getDashboardStats } from "@/services/apiData";
+import { supabase } from "@/lib/supabase";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { revenueData, occupancyData, roomTypeRevenue } from "@/data/mockData";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, PieChart, Pie, Cell, LineChart, Line, Legend,
+} from "recharts";
+
+const COLORS = ['hsl(38, 70%, 55%)', 'hsl(220, 30%, 22%)', 'hsl(142, 60%, 40%)', 'hsl(210, 80%, 52%)', 'hsl(0, 72%, 51%)'];
+
+const Analytics = () => {
+  const queryClient = useQueryClient();
+
+  const { data: stats, isLoading } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: getDashboardStats
+  });
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-stats')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        // Refresh the analytics stats whenever a booking changes
+        queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      })
+      .subscribe();
+
+    return () => { 
+      supabase.removeChannel(channel); 
+    };
+  }, [queryClient]);
+
+  if (isLoading) return <DashboardLayout>Loading Analytics...</DashboardLayout>;
+
+  return (
+    <DashboardLayout>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Analytics</h1>
+          <p className="text-sm text-muted-foreground mt-1">Revenue, occupancy, and booking insights</p>
+        </div>
+      </div>
+
+      {/* KPI Row using REAL data */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="stat-card text-center">
+          <p className="text-3xl font-bold font-heading text-foreground">
+            ${(stats.total_revenue / 1000).toFixed(1)}k
+          </p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Total Revenue</p>
+        </div>
+        
+        <div className="stat-card text-center">
+          <p className="text-3xl font-bold font-heading text-foreground">
+            {stats.total_confirmed_bookings}
+          </p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Confirmed Bookings</p>
+        </div>
+
+        <div className="stat-card text-center">
+          <p className="text-3xl font-bold font-heading text-foreground">
+            {stats.current_occupancy_rate}%
+          </p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Occupancy Rate</p>
+        </div>
+
+        <div className="stat-card text-center">
+          <p className="text-3xl font-bold font-heading text-foreground">
+            {stats.total_guests}
+          </p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mt-1">Total Guests</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="stat-card">
+          <h3 className="section-title">Monthly Revenue & Bookings</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={revenueData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(40, 15%, 89%)" />
+              <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="hsl(220, 10%, 46%)" />
+              <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="hsl(220, 10%, 46%)" tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} stroke="hsl(220, 10%, 46%)" />
+              <Tooltip />
+              <Legend />
+              <Bar yAxisId="left" dataKey="revenue" fill="hsl(38, 70%, 55%)" radius={[4,4,0,0]} name="Revenue ($)" />
+              <Line yAxisId="right" type="monotone" dataKey="bookings" stroke="hsl(220, 30%, 22%)" strokeWidth={2} name="Bookings" dot={{ r: 3 }} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="stat-card">
+          <h3 className="section-title">Revenue by Room Type</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie data={roomTypeRevenue} dataKey="revenue" nameKey="type" cx="50%" cy="50%" outerRadius={100} label={({ name, percent }) => `${name} ${((percent as number) * 100).toFixed(0)}%`}>
+                {roomTypeRevenue.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              </Pie>
+              <Tooltip formatter={(value: number) => `$${value.toLocaleString()}`} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="stat-card">
+        <h3 className="section-title">Weekly Occupancy Rate</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart data={occupancyData}>
+            <defs>
+              <linearGradient id="occGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="hsl(220, 30%, 22%)" stopOpacity={0.3} />
+                <stop offset="95%" stopColor="hsl(220, 30%, 22%)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(40, 15%, 89%)" />
+            <XAxis dataKey="day" tick={{ fontSize: 12 }} stroke="hsl(220, 10%, 46%)" />
+            <YAxis tick={{ fontSize: 12 }} stroke="hsl(220, 10%, 46%)" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+            <Tooltip formatter={(value: number) => [`${value}%`, 'Occupancy']} />
+            <Area type="monotone" dataKey="rate" stroke="hsl(220, 30%, 22%)" fill="url(#occGradient)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+export default Analytics;
+
+
+/pages/Guests.tsx
+import { useState } from "react";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { guests } from "@/data/mockData";
+import { Input } from "@/components/ui/input";
+import { Search, Crown, Mail, Phone } from "lucide-react";
+
+const Guests = () => {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredGuests = guests.filter(g =>
+    g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    g.email.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <DashboardLayout>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Guests</h1>
+          <p className="text-sm text-muted-foreground mt-1">Guest profiles and booking history</p>
+        </div>
+      </div>
+
+      <div className="relative max-w-md mb-6">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input placeholder="Search guests..." className="pl-9" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredGuests.map((guest) => (
+          <div key={guest.id} className="stat-card">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
+                  {guest.name.split(' ').map(n => n[0]).join('')}
+                </div>
+                <div>
+                  <h3 className="font-semibold text-foreground flex items-center gap-1.5">
+                    {guest.name}
+                    {guest.vipStatus && <Crown className="w-3.5 h-3.5 text-accent" />}
+                  </h3>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2 text-sm text-muted-foreground mb-4">
+              <p className="flex items-center gap-2"><Mail className="w-3.5 h-3.5" />{guest.email}</p>
+              <p className="flex items-center gap-2"><Phone className="w-3.5 h-3.5" />{guest.phone}</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border text-center">
+              <div>
+                <p className="text-lg font-semibold text-foreground">{guest.totalStays}</p>
+                <p className="text-xs text-muted-foreground">Stays</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-foreground">${guest.totalSpent.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">Spent</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">{guest.lastVisit}</p>
+                <p className="text-xs text-muted-foreground">Last Visit</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </DashboardLayout>
+  );
+};
+
+export default Guests;
